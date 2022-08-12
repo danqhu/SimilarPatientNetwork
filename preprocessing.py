@@ -154,7 +154,7 @@ data_selected = feature_preprocessing(data=data_selected, binarize_size=True)
 data_selected = imputate_missing_values(data_selected, binarize_size=True)
 
 
-data_selected_normalizaed = feature_normalization(data_selected, normalization_type="normalization")
+data_selected_normalizaed = feature_normalization(data_selected, normalization_type="standardlization")
 
 
 data_selected.reset_index(inplace=True, drop=True)
@@ -166,6 +166,7 @@ data_one_hot_normalized = one_hot_encoding(data_selected_normalizaed, drop_first
 features_list = data_one_hot.columns.to_numpy()
 
 data_one_hot.to_csv('data/data_one_hot.csv',index=False)
+data_one_hot_normalized.to_csv('data/data_one_hot_normalized.csv',index=False)
 
 
 
