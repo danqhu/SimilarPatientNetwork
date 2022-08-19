@@ -11,7 +11,7 @@ petct_subset = False
 
 
 
-data = pd.read_csv('data/multimodel_data_8.csv')                   # 读取标注数据
+data = pd.read_csv('~/data/projects_dataset/SimilarPatientNetworkData/data/multimodel_data_8.csv')                   # 读取标注数据
 data.dropna(subset=["Stage_pN",  "2"], inplace=True)          # 剔除出没有病理分期和增强CT影像的患者 , "SUV_zongge",
 
 
@@ -39,7 +39,7 @@ labels_binary[labels_pN == 3] = 1
 
 # print(labels_binary.value_counts())
 
-labels_binary.to_csv('data/labels_binary_' + label_flag + '.csv',index=False)
+labels_binary.to_csv('~/data/projects_dataset/SimilarPatientNetworkData/data/labels_binary_' + label_flag + '.csv',index=False)
 
 
 
@@ -154,19 +154,29 @@ data_selected = feature_preprocessing(data=data_selected, binarize_size=True)
 data_selected = imputate_missing_values(data_selected, binarize_size=True)
 
 
-data_selected_normalizaed = feature_normalization(data_selected, normalization_type="standardlization")
+data_selected_normalized = feature_normalization(data_selected, normalization_type="normalization")
+data_selected_standardlized = feature_normalization(data_selected, normalization_type="standardlization")
 
 
 data_selected.reset_index(inplace=True, drop=True)
-data_selected_normalizaed.reset_index(inplace=True, drop=True)
+data_selected_normalized.reset_index(inplace=True, drop=True)
+data_selected_standardlized.reset_index(inplace=True, drop=True)
+
 
 
 data_one_hot = one_hot_encoding(data_selected, drop_first=False)
-data_one_hot_normalized = one_hot_encoding(data_selected_normalizaed, drop_first=False)
+data_one_hot_normalized = one_hot_encoding(data_selected_normalized, drop_first=False)
+data_one_hot_standardlized = one_hot_encoding(data_selected_standardlized, drop_first=False)
 features_list = data_one_hot.columns.to_numpy()
 
-data_one_hot.to_csv('data/data_one_hot.csv',index=False)
-data_one_hot_normalized.to_csv('data/data_one_hot_normalized.csv',index=False)
 
+'''保存预处理后的数据'''
+# data_one_hot.to_csv('~/data/projects_dataset/SimilarPatientNetworkData/data/data_one_hot.csv',index=False)
+# data_one_hot_normalized.to_csv('~/data/projects_dataset/SimilarPatientNetworkData/data/data_one_hot_normalized.csv',index=False)
+# data_one_hot_standardlized.to_csv('~/data/projects_dataset/SimilarPatientNetworkData/data/data_one_hot_standardlized.csv',index=False)
+
+'''保存预处理后的数据对应的影像编号'''
+data_image_filename = data[['Image_id', 'CT_exam_id2']].astype({'Image_id':'int32', 'CT_exam_id2':'int32'})
+data_image_filename.to_csv('~/data/projects_dataset/SimilarPatientNetworkData/data/data_image_filename.csv',index=False)
 
 
