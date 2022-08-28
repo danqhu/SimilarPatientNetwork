@@ -165,7 +165,7 @@ def train_gcn(
 
 
     graph = GraphDataset(nodes_data, edges_data, labels, train_mask, val_mask, test_mask)[0].to(device)
-    graph = dgl.add_self_loop(graph)
+    # graph = dgl.add_self_loop(graph)
 
     features = graph.ndata['feat']
     
@@ -179,8 +179,8 @@ def train_gcn(
     criterian = nn.CrossEntropyLoss()
     softmax = nn.Softmax(dim=1)
     # optimizer = torch.optim.SGD(ddp_model.parameters(), lr=lr, momentum=0.9)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, betas=[0.9, 0.999])
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer=optimizer, step_size=10, gamma=1)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, betas=[0.9, 0.999],weight_decay=0.01)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer=optimizer, step_size=100, gamma=1)
     # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer=optimizer, T_max=10, eta_min=1e-6)
     # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer=optimizer, mode='min', factor=0.1, patience=5)
 
@@ -233,17 +233,17 @@ def train_gcn(
         total_loss = 0
 
 
-        # if val_auc > best_val_auc:
-        #     best_val_auc = val_auc
-        #     best_model_wts = copy.deepcopy(model.state_dict())
+        if val_auc > best_val_auc:
+            best_val_auc = val_auc
+            best_model_wts = copy.deepcopy(model.state_dict())
 
-        #     path = best_model_dir + 'best_val_model_' + str(fold) + '.pt'
-        #     if not os.path.exists(best_model_dir):
-        #         os.makedirs(best_model_dir)
+            path = best_model_dir + 'best_val_model_' + str(fold) + '.pt'
+            if not os.path.exists(best_model_dir):
+                os.makedirs(best_model_dir)
             
-        #     torch.save({
-        #         'model_state_dict': best_model_wts,
-        #     }, path)
+            torch.save({
+                'model_state_dict': best_model_wts,
+            }, path)
 
 
 
@@ -267,7 +267,7 @@ def evaluate_gcn(
     device = torch.device(config.gpu_id if torch.cuda.is_available() else "cpu")
     # device = torch.device("cpu")
     graph = GraphDataset(nodes_data, edges_data, labels, train_mask, val_mask, test_mask)[0].to(device)
-    graph = dgl.add_self_loop(graph)
+    # graph = dgl.add_self_loop(graph)
     
     features = graph.ndata['feat']
 

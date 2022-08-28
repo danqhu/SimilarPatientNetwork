@@ -46,7 +46,7 @@ else:
     data_std = pd.read_csv(config.local_clinical_data_folder_path + 'data_one_hot_standardlized_nodeep.csv')
 
 
-data = data_norm
+# data = data_norm
 
 labels = pd.read_csv(config.local_clinical_data_folder_path + 'labels_binary_N2.csv').values.squeeze()
 
@@ -143,7 +143,7 @@ def construct_graph(
                 dist += dis
         elif method == 'cos':
             for i, feature in enumerate(features):
-                dist += cosine_similarity(feature)
+                dist += weights[i] * cosine_similarity(feature)
                 # dist += np.dot(feature, feature.T)
 #                 print('dist= {}'.format(dist))  
         elif method == 'ncos':
@@ -160,7 +160,8 @@ def construct_graph(
             for index, neighs in enumerate(inds):
                 for neigh in neighs:
                     if neigh == index:
-                        pass
+                        # pass
+                        f.write('{},{}\n'.format(index,neigh ))
                     else:
                         if labels[neigh] != labels[index]:
                             counter += 1
@@ -320,9 +321,9 @@ def construct_graph_seperated(features, label,
 
 
 
-weights = [1,1,1,1,1,0.1]
+weights = [1,1,0.1,1,0.1,1]
 
-for K in [2,4,6,8,10,12]:
+for K in [0,2,4,6,8,10,12]:
     construct_graph([tumor_data,lymph_node_data,demographic_data,biomarker_data,comorbidity_data,deepfeature_data], labels, weights, method='cos',output_dir=config.local_clinical_data_folder_path+ 'graph_cos_{}.csv'.format(K),topk=K)
 
 
