@@ -4,4 +4,4 @@ local_CT_data_folder_path = '/home/hdq/data/local/SimilarPatientNetworkData/CT_i
 local_clinical_data_folder_path = '/home/hdq/data/local/SimilarPatientNetworkData/data/'
 remote_CT_data_folder_path = '/home/hdq/data/remote/projects_dataset/SimilarPatientNetworkData/CT_images/'
 remote_clinical_data_folder_path = '/home/hdq/data/remote/projects_dataset/SimilarPatientNetworkData/data/'
-gpu_id = 'cuda:1'
+gpu_id = 'cuda:3'

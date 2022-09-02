@@ -323,18 +323,18 @@ def construct_graph_seperated(features, label,
 def construct_PosNeg_graphs(    
     data, 
     labels,
-    train_mask,
-    val_mask,
-    test_mask=None, 
+    train_index=None,
+    val_index=None,
+    test_index=None, 
+    topk = 10,
     method='heat',
     sigma=0.01,
     output_dir=None,
-    topk = 10,
     deepfeature=False,
-    save_results=True):
+    save_results=False):
 
 
-    all_data = data.values
+  
     tumor_data = data[tumor_col].values
     lymph_node_data = data[lymph_node_col].values
     demographic_data = data[demographic_col].values
@@ -342,45 +342,75 @@ def construct_PosNeg_graphs(
     comorbidity_data = data[comorbidity_col].values
     if deepfeature:
         deepfeature_data = data[deepfeature_col].values
+    
+    pos_data = data.loc[labels==1, :]
+    neg_data = data.loc[labels==0, :]
+    pos_data_index = pos_data.index
+    neg_data_index = neg_data.index
+
    
 
-    n_samples = len(labels)
-    dist = np.zeros((n_samples,n_samples))
-    inds = []
+    n_pos = pos_data.shape[0]
+    n_neg = neg_data.shape[0]
+
+
+    pos_dist = np.zeros((n_pos,n_pos))
+    neg_dist = np.zeros((n_neg,n_neg))
+    inds = np.zeros((data.shape[0], topk+1))
 
     if method!='random':
         if method == 'heat':
-            dist = pairwise_distances(all_data) **2
-            sigma = np.mean(dist)
-            dist = np.exp(-dist/sigma)
+            pos_dist = pairwise_distances(pos_data) **2
+            pos_sigma = np.mean(pos_dist)
+            pos_dist = np.exp(-pos_dist/pos_sigma)
+
+            neg_dist = pairwise_distances(neg_data) **2
+            neg_sigma = np.mean(neg_dist)
+            neg_dist = np.exp(-neg_dist/neg_sigma)
+
+
         elif method == 'cos':
 
-            dist += cosine_similarity(all_data)
+            dist += cosine_similarity(data)
             # dist += np.dot(feature, feature.T)
 #                 print('dist= {}'.format(dist))  
 
         # dist/=len(data)
         
-        for i in range(dist.shape[0]):
-            ind = np.argpartition(dist[i, :], -(topk+1))[-(topk+1):]
-            inds.append(ind)
+        for i in range(pos_dist.shape[0]):
+            ind = np.argpartition(pos_dist[i, :], -(topk+1))[-(topk+1):]
+            inds[pos_data_index[i],:] = pos_data_index[ind]
         
-        if save_results:
-            file_path=output_dir+ 'graph_{}_{}.csv'.format(method,topk)
-            with open(file_path, 'w',encoding='utf8') as f:
-                counter = 0
-                for index, neighs in enumerate(inds):
-                    for neigh in neighs:
-                        if neigh == index:
-                            # pass
-                            f.write('{},{}\n'.format(index,neigh ))
-                        else:
-                            if labels[neigh] != labels[index]:
-                                counter += 1
-                                # pass
-                            else:
-                                f.write('{},{}\n'.format(index,neigh ))
-    return inds
+        for i in range(neg_dist.shape[0]):
+            ind = np.argpartition(neg_dist[i, :], -(topk+1))[-(topk+1):]
+            inds[neg_data_index[i],:] = neg_data_index[ind]
+
+        
+        edges = []
+        for row in range(inds.shape[0]):
+            for col in range(inds.shape[1]):
+                edges.append([row, int(inds[row,col])])
+                if labels[row] != labels[int(inds[row,col])]:
+                    print('counter node link')
+        edges = np.array(edges, dtype=np.int32)
+
+
+        # if save_results:
+        #     file_path=output_dir+ 'graph_{}_{}.csv'.format(method,topk)
+        #     with open(file_path, 'w',encoding='utf8') as f:
+        #         counter = 0
+        #         for index, neighs in enumerate(inds):
+        #             for neigh in neighs:
+        #                 if neigh == index:
+        #                     # pass
+        #                     f.write('{},{}\n'.format(index,neigh ))
+        #                 else:
+        #                     if labels[neigh] != labels[index]:
+        #                         counter += 1
+        #                         # pass
+        #                     else:
+        #                         f.write('{},{}\n'.format(index,neigh ))
+    return edges
 
 
 

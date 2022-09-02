@@ -358,10 +358,10 @@ def train_PosNeg_ps_graph(
     model,  
     data,
     labels,
-    train_mask,
-    val_mask,
-    train_val_mask,
-    test_mask,
+    train_index,
+    val_index,
+    train_val_index,
+    test_index,
     best_model_dir,
     fold,
     cv_idx,
@@ -372,15 +372,15 @@ def train_PosNeg_ps_graph(
 
     model.to(device)
 
-    train_val_data = data[:, train_val_mask]
-    train_val_labels = labels[train_val_mask]
-    edges_train_val = construct_PosNeg_graphs(train_val_data, train_val_labels, train_mask, val_mask)
+    train_val_data = data.loc[train_val_index, :].reset_index(inplace=False, drop=True)
+    train_val_labels = labels[train_val_index]
+    train_val_edges = construct_PosNeg_graphs(train_val_data, train_val_labels, train_index, val_index, topk=3)
 
 
-    graph = GraphDataset(data, data, labels, train_mask, val_mask, test_mask)[0].to(device)
+    train_val_graph = GraphDataset(train_val_data.values, train_val_edges, train_val_labels, train_index, val_index)[0].to(device)
     # graph = dgl.add_self_loop(graph)
 
-    features = graph.ndata['feat']
+    features = train_val_graph.ndata['feat']
     
 
 
@@ -414,12 +414,12 @@ def train_PosNeg_ps_graph(
 
         optimizer.zero_grad()
 
-        outputs = model(graph, features)
+        outputs = model(train_val_graph, features)
 
-        loss = criterian(outputs[graph.ndata['train_mask']], graph.ndata['label'][graph.ndata['train_mask']])
+        loss = criterian(outputs[train_val_graph.ndata['train_mask']], train_val_graph.ndata['label'][train_val_graph.ndata['train_mask']])
 
 
-        probas = softmax(outputs)
+        probas = softmax(outputs[train_val_graph.ndata['train_mask']])
         total_loss += loss.item()
         
         
@@ -433,8 +433,8 @@ def train_PosNeg_ps_graph(
         optimizer.step()
         scheduler.step()
 
-        y_probs = softmax(outputs[train_mask]).detach().cpu().numpy()[:, 1]
-        y_true = labels[train_mask]
+        y_probs = probas.detach().cpu().numpy()[:, 1]
+        y_true = train_val_graph.ndata['label'][train_val_graph.ndata['train_mask']].detach().cpu().numpy()
 
 
 
@@ -443,8 +443,17 @@ def train_PosNeg_ps_graph(
   
     
         # train_loss, train_auc, train_ap = evaluate_rnt(model, criterian, data_train, labels_train, data_image_filename_train)
-        val_loss, val_auc, val_ap, _, _ = evaluate_gnn(model, criterian, data, edges_data, labels, train_mask, val_mask, test_mask, val_mask)
-        test_loss, test_auc, test_ap, _, _ = evaluate_gnn(model, criterian, data, edges_data, labels, train_mask, val_mask, test_mask, test_mask, test=True)
+        val_loss, val_auc, val_ap, _, _ = evaluate_PosNeg_ps_graph(
+            model, 
+            criterian, 
+            data, 
+            labels, 
+            train_index, 
+            val_index,
+            train_val_index,
+            test_index)
+                
+        # test_loss, test_auc, test_ap, _, _ = evaluate_gnn(model, criterian, data, edges_data, labels, train_mask, val_mask, test_mask, test_mask, test=True)
         
         # if write_log:
         #     writer.add_scalars('Loss/fold'+str(fold), {'train':total_loss, 'val': val_loss, 'test':test_loss}, epoch)
@@ -456,7 +465,7 @@ def train_PosNeg_ps_graph(
         print('Current learning rate: {}'.format(optimizer.param_groups[0]['lr']))
         print('-' * 89)
         print('| end of epoch {:3d} | time: {:5.2f}s | train loss {:5.2f} | valid loss {:5.2f} |'
-                'valid AUC {:.3f}  | valid AP {:.3f} | test loss {:5.2f} | test AUC {:.3f}  | test AP {:.3f}'.format(epoch, (time.time() - epoch_start_time), total_loss, val_loss, val_auc, val_ap, test_loss, test_auc, test_ap))
+                'valid AUC {:.3f}  | valid AP {:.3f} | test loss {:5.2f} | test AUC {:.3f}  | test AP {:.3f}'.format(epoch, (time.time() - epoch_start_time), total_loss, val_loss, val_auc, val_ap, 0, 0, 0))
         print('-' * 89)
 
         total_loss = 0
@@ -484,52 +493,117 @@ def train_PosNeg_ps_graph(
 def evaluate_PosNeg_ps_graph(
     eval_model,
     criterian,
-    nodes_data,
-    edges_data,
+    data,
     labels,
-    train_mask,
-    val_mask,
-    test_mask,
-    mask,
+    train_index,
+    val_index,
+    train_val_index,
+    test_index,
     test=False 
 ):
-    device = torch.device(config.gpu_id if torch.cuda.is_available() else "cpu")
-    # device = torch.device("cpu")
-    graph = GraphDataset(nodes_data, edges_data, labels, train_mask, val_mask, test_mask)[0].to(device)
-    # graph = dgl.add_self_loop(graph)
+    if not test:
+        device = torch.device(config.gpu_id if torch.cuda.is_available() else "cpu")
+        # device = torch.device("cpu")
+
+        train_val_data = data.loc[train_val_index, :].reset_index(inplace=False, drop=True)
+        train_val_labels = labels[train_val_index]
+        train_val_edges = construct_PosNeg_graphs(train_val_data, train_val_labels, train_index, val_index, topk=3)
+
+
+        train_val_graph = GraphDataset(train_val_data.values, train_val_edges, train_val_labels, train_index, val_index)[0].to(device)
+        # graph = dgl.add_self_loop(graph)
+
+
+
+        
+        
+        features = train_val_graph.ndata['feat']
+
+        train_val_labels = torch.tensor(train_val_labels, dtype=torch.long).to(device)
+
+        mask_bool = train_val_graph.ndata['val_mask']
+
+        # graph = GraphDataset(nodes_data, edges_data, labels)[0].to(device)
+        # mask_bool = torch.zeros(nodes_data.shape[0], dtype=torch.bool)
+        # mask_bool[mask] = True
+
+        
+        
+        eval_model.to(device)
+
+        softmax = nn.Softmax(dim=1)
+
+        eval_model.eval()
+
+        outputs = eval_model(train_val_graph, features)
+        # outputs= outputs.view(-1)
+        loss = criterian(outputs[mask_bool], train_val_labels[mask_bool])
+        # probas = sigmoid(outputs)
+        probas = softmax(outputs[mask_bool])
+
+
+        y_probs = probas.detach().cpu().numpy()[:, 1]
+        y_true = train_val_labels[mask_bool].detach().cpu().numpy()
+        total_loss = loss.item()
+
+
+        auc = roc_auc_score(y_true=y_true, y_score=y_probs)
+        ap = average_precision_score(y_true=y_true, y_score=y_probs)
     
-    features = graph.ndata['feat']
+    if test:
+        device = torch.device(config.gpu_id if torch.cuda.is_available() else "cpu")
+        # device = torch.device("cpu")
 
-    labels = torch.tensor(labels, dtype=torch.long).to(device)
-
-    mask_bool = graph.ndata['test_mask'] if test else graph.ndata['val_mask']
-
-    # graph = GraphDataset(nodes_data, edges_data, labels)[0].to(device)
-    # mask_bool = torch.zeros(nodes_data.shape[0], dtype=torch.bool)
-    # mask_bool[mask] = True
-
-    
-    
-    eval_model.to(device)
-
-    softmax = nn.Softmax(dim=1)
-
-    eval_model.eval()
-
-    outputs = eval_model(graph, features)
-    # outputs= outputs.view(-1)
-    loss = criterian(outputs[mask_bool], labels[mask_bool])
-    # probas = sigmoid(outputs)
-    probas = softmax(outputs[mask_bool])
+        train_val_data = data.loc[train_val_index, :].reset_index(inplace=False, drop=True)
+        train_val_labels = labels[train_val_index]
+        train_val_edges = construct_PosNeg_graphs(train_val_data, train_val_labels, train_index, val_index, topk=3)
 
 
-    y_probs = probas.detach().cpu().numpy()[:, 1]
-    y_true = labels[mask].detach().cpu().numpy()
-    total_loss = loss.item()
+        train_val_graph = GraphDataset(train_val_data.values, train_val_edges, train_val_labels, train_index, val_index)[0].to(device)
+        # graph = dgl.add_self_loop(graph)
+        test_graphs = []
+         
+        ''''''
+        # 遍历每一个test sample
+        # 将其与train_val samples 构建两个图，一个是与pos相连，一个是与neg相连
+        # 将构建的图经过网络，预测test sample的属于哪一类，对两个图的结果进行softmax作为其预测结果
 
 
-    auc = roc_auc_score(y_true=y_true, y_score=y_probs)
-    ap = average_precision_score(y_true=y_true, y_score=y_probs)
+
+        
+        
+        features = train_val_graph.ndata['feat']
+
+        train_val_labels = torch.tensor(train_val_labels, dtype=torch.long).to(device)
+
+        mask_bool = train_val_graph.ndata['val_mask']
+
+        # graph = GraphDataset(nodes_data, edges_data, labels)[0].to(device)
+        # mask_bool = torch.zeros(nodes_data.shape[0], dtype=torch.bool)
+        # mask_bool[mask] = True
+
+        
+        
+        eval_model.to(device)
+
+        softmax = nn.Softmax(dim=1)
+
+        eval_model.eval()
+
+        outputs = eval_model(train_val_graph, features)
+        # outputs= outputs.view(-1)
+        loss = criterian(outputs[mask_bool], train_val_labels[mask_bool])
+        # probas = sigmoid(outputs)
+        probas = softmax(outputs[mask_bool])
+
+
+        y_probs = probas.detach().cpu().numpy()[:, 1]
+        y_true = train_val_labels[mask_bool].detach().cpu().numpy()
+        total_loss = loss.item()
+
+
+        auc = roc_auc_score(y_true=y_true, y_score=y_probs)
+        ap = average_precision_score(y_true=y_true, y_score=y_probs)
 
 
 
