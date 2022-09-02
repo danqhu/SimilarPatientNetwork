@@ -10,44 +10,43 @@ import json
 import random
 import copy
 
-from sklearn.metrics.pairwise import cosine_similarity as cos
-from sklearn.metrics import pairwise_distances as pair
+from sklearn.metrics import pairwise_distances
 from sklearn.preprocessing import normalize
 import torch
 import config
 
 
-def setup_seed(seed):
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    np.random.seed(seed)
-    random.seed(seed)
-    torch.backends.cudnn.deterministic = True
+# def setup_seed(seed):
+#     torch.manual_seed(seed)
+#     torch.cuda.manual_seed_all(seed)
+#     np.random.seed(seed)
+#     random.seed(seed)
+#     torch.backends.cudnn.deterministic = True
 
 
-# 设置随机数种子
-setup_seed(config.random_seed)
+# # 设置随机数种子
+# setup_seed(config.random_seed)
 
-deepfeatures = False
-
-
-deepfeatures = True
+# deepfeatures = False
 
 
+# deepfeatures = True
 
 
-if deepfeatures:
-    data = pd.read_csv(config.local_clinical_data_folder_path + 'data_one_hot.csv')
-    data_norm = pd.read_csv(config.local_clinical_data_folder_path + 'data_one_hot_normalized.csv')
-    data_std = pd.read_csv(config.local_clinical_data_folder_path + 'data_one_hot_standardlized.csv')
-else:
-    data = pd.read_csv(config.local_clinical_data_folder_path + 'data_one_hot_nodeep.csv')
-    data_norm = pd.read_csv(config.local_clinical_data_folder_path + 'data_one_hot_normalized_nodeep.csv')
-    data_std = pd.read_csv(config.local_clinical_data_folder_path + 'data_one_hot_standardlized_nodeep.csv')
 
 
-# data = data_norm
+# if deepfeatures:
+#     data = pd.read_csv(config.local_clinical_data_folder_path + 'data_one_hot.csv')
+#     data_norm = pd.read_csv(config.local_clinical_data_folder_path + 'data_one_hot_normalized.csv')
+#     data_std = pd.read_csv(config.local_clinical_data_folder_path + 'data_one_hot_standardlized.csv')
+# else:
+#     data = pd.read_csv(config.local_clinical_data_folder_path + 'data_one_hot_nodeep.csv')
+#     data_norm = pd.read_csv(config.local_clinical_data_folder_path + 'data_one_hot_normalized_nodeep.csv')
+#     data_std = pd.read_csv(config.local_clinical_data_folder_path + 'data_one_hot_standardlized_nodeep.csv')
 
+
+# # data = data_norm
+data = pd.read_csv(config.local_clinical_data_folder_path + 'data_one_hot.csv')
 labels = pd.read_csv(config.local_clinical_data_folder_path + 'labels_binary_N2.csv').values.squeeze()
 
 
@@ -109,78 +108,81 @@ deepfeature_col = [
 
 
 
-tumor_data = data[tumor_col]
-lymph_node_data = data[lymph_node_col]
-demographic_data = data[demographic_col]
-biomarker_data = data[biomarker_col]
-comorbidity_data = data[comorbidity_col]
-deepfeature_data = data[deepfeature_col]
-
-
-
 '''使用全部数据构建相似患者网络'''
 def construct_graph(
-    features, 
+    data, 
     labels, 
     weights=None,
     method='heat',
+    sigma=0.01,
     output_dir=None,
     topk = 10,
-    add_image=False):
+    deepfeature=False,
+    save_results=True):
 
 
-
-    
+    all_data = data.values
+    tumor_data = data[tumor_col].values
+    lymph_node_data = data[lymph_node_col].values
+    demographic_data = data[demographic_col].values
+    biomarker_data = data[biomarker_col].values
+    comorbidity_data = data[comorbidity_col].values
+    if deepfeature:
+        deepfeature_data = data[deepfeature_col].values
    
 
     n_samples = len(labels)
     dist = np.zeros((n_samples,n_samples))
+    inds = []
+
     if method!='random':
         if method == 'heat':
-            for feature in features:
-                dis = -0.5 * pair(feature) ** 2
-                dis = np.exp(dis)
-                dist += dis
+            dist = pairwise_distances(all_data) **2
+            sigma = np.mean(dist)
+            dist = np.exp(-dist/sigma)
         elif method == 'cos':
-            for i, feature in enumerate(features):
-                dist += weights[i] * cosine_similarity(feature)
-                # dist += np.dot(feature, feature.T)
+
+            dist += weights[i] * cosine_similarity(all_data)
+            # dist += np.dot(feature, feature.T)
 #                 print('dist= {}'.format(dist))  
-        elif method == 'ncos':
-            for feature in features:
-                feature = normalize(feature, axis=1, norm='l1')
-                dist += np.dot(feature, feature.T)
-        dist/=len(features)
-        inds = []
+
+        # dist/=len(data)
+        
         for i in range(dist.shape[0]):
             ind = np.argpartition(dist[i, :], -(topk+1))[-(topk+1):]
             inds.append(ind)
-        with open(output_dir, 'w',encoding='utf8') as f:
-            counter = 0
-            for index, neighs in enumerate(inds):
-                for neigh in neighs:
-                    if neigh == index:
-                        # pass
-                        f.write('{},{}\n'.format(index,neigh ))
-                    else:
-                        if labels[neigh] != labels[index]:
-                            counter += 1
-                            
-                        f.write('{},{}\n'.format(index,neigh ))
-
-    else:
         
-        with open(output_dir, 'w',encoding='utf8') as f:
-            for index in range(len(features[0])):
-                neighs = []
-                neigh_index = 0
-                while neigh_index < topk:
-                    neigh = np.random.randint(len(features[0]))
-                    if neigh!=index and neigh not in neighs:
-                        neighs.append(neigh)
-                        neigh_index+=1
-                for neigh in neighs:
-                    f.write('{},{}\n'.format(index, neigh))
+        if save_results:
+            file_path=output_dir+ 'graph_{}_{}.csv'.format(method,topk)
+            with open(file_path, 'w',encoding='utf8') as f:
+                counter = 0
+                for index, neighs in enumerate(inds):
+                    for neigh in neighs:
+                        if neigh == index:
+                            # pass
+                            f.write('{},{}\n'.format(index,neigh ))
+                        else:
+                            if labels[neigh] != labels[index]:
+                                counter += 1
+                                # pass
+                            else:
+                                f.write('{},{}\n'.format(index,neigh ))
+    return inds
+
+
+    # else:
+        
+    #     with open(output_dir, 'w',encoding='utf8') as f:
+    #         for index in range(len(features[0])):
+    #             neighs = []
+    #             neigh_index = 0
+    #             while neigh_index < topk:
+    #                 neigh = np.random.randint(len(features[0]))
+    #                 if neigh!=index and neigh not in neighs:
+    #                     neighs.append(neigh)
+    #                     neigh_index+=1
+    #             for neigh in neighs:
+    #                 f.write('{},{}\n'.format(index, neigh))
 
 
 
@@ -318,13 +320,74 @@ def construct_graph_seperated(features, label,
                         f.write('{} {}\n'.format(index,neigh )) 
 
 
+def construct_PosNeg_graphs(    
+    data, 
+    labels,
+    train_mask,
+    val_mask,
+    test_mask=None, 
+    method='heat',
+    sigma=0.01,
+    output_dir=None,
+    topk = 10,
+    deepfeature=False,
+    save_results=True):
+
+
+    all_data = data.values
+    tumor_data = data[tumor_col].values
+    lymph_node_data = data[lymph_node_col].values
+    demographic_data = data[demographic_col].values
+    biomarker_data = data[biomarker_col].values
+    comorbidity_data = data[comorbidity_col].values
+    if deepfeature:
+        deepfeature_data = data[deepfeature_col].values
+   
+
+    n_samples = len(labels)
+    dist = np.zeros((n_samples,n_samples))
+    inds = []
+
+    if method!='random':
+        if method == 'heat':
+            dist = pairwise_distances(all_data) **2
+            sigma = np.mean(dist)
+            dist = np.exp(-dist/sigma)
+        elif method == 'cos':
+
+            dist += cosine_similarity(all_data)
+            # dist += np.dot(feature, feature.T)
+#                 print('dist= {}'.format(dist))  
+
+        # dist/=len(data)
+        
+        for i in range(dist.shape[0]):
+            ind = np.argpartition(dist[i, :], -(topk+1))[-(topk+1):]
+            inds.append(ind)
+        
+        if save_results:
+            file_path=output_dir+ 'graph_{}_{}.csv'.format(method,topk)
+            with open(file_path, 'w',encoding='utf8') as f:
+                counter = 0
+                for index, neighs in enumerate(inds):
+                    for neigh in neighs:
+                        if neigh == index:
+                            # pass
+                            f.write('{},{}\n'.format(index,neigh ))
+                        else:
+                            if labels[neigh] != labels[index]:
+                                counter += 1
+                                # pass
+                            else:
+                                f.write('{},{}\n'.format(index,neigh ))
+    return inds
 
 
 
-weights = [1,1,0.1,1,0.1,1]
+# weights = [1,1,0.1,1,0.1,1]
 
-for K in [0,2,4,6,8,10,12]:
-    construct_graph([tumor_data,lymph_node_data,demographic_data,biomarker_data,comorbidity_data,deepfeature_data], labels, weights, method='cos',output_dir=config.local_clinical_data_folder_path+ 'graph_cos_{}.csv'.format(K),topk=K)
+# for K in [0,2,4,6,8,10,12]:
+#     construct_graph(data, labels, weights, method='heat',output_dir=config.local_clinical_data_folder_path,topk=K)
 
 
 
