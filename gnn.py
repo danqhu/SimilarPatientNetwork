@@ -13,6 +13,8 @@ import time
 import copy
 from sklearn.metrics import roc_auc_score, average_precision_score
 import os
+from torch.utils.tensorboard import SummaryWriter
+from preprocessing4graph import construct_PosNeg_graphs
 
 
 # class GNNLayer(Module):
@@ -143,10 +145,31 @@ class gcn(nn.Module):
 
         return h
 
+class gat(nn.Module):
+    def __init__(self, in_feats, hid_feats, out_feats, num_heads=2) -> None:
+        super().__init__()
+
+        self.conv1 = GATConv(in_feats, hid_feats[0], num_heads)
+        # self.conv2 = GATConv(hid_feats[0]*num_heads, hid_feats[1], num_heads)
+        # self.conv3 = GATConv(hid_feats[1]*num_heads, hid_feats[2], num_heads)
+        self.fc = nn.Linear(hid_feats[0], out_feats)
+    
+    def forward(self, graph, inputs):
+        h = self.conv1(graph, inputs)
+        h = F.relu(h)
+        # h = torch.flatten(h, start_dim=1)
+        # h = self.conv2(graph, h)
+        # h = F.relu(h)
+        # h = torch.flatten(h, start_dim=1)
+        # h = self.conv3(graph, h)
+        # h = F.relu(h)
+        h = torch.mean(h, dim=1)
+        h = self.fc(h)
+
+        return h
 
 
-
-def train_gcn(
+def train_gnn(
     hyper_params,
     model,  
     nodes_data,
@@ -156,7 +179,9 @@ def train_gcn(
     val_mask,
     test_mask,
     best_model_dir,
-    fold
+    fold,
+    cv_idx,
+    write_log=False
 ):
     device = torch.device(config.gpu_id if torch.cuda.is_available() else "cpu")
     # device = torch.device("cpu")
@@ -189,7 +214,8 @@ def train_gcn(
     best_val_loss = float("inf")
     best_val_auc = float("-inf")
     best_val_ap = float("-inf")
-
+    
+    # writer = SummaryWriter(log_dir='./runs/')
     
 
     for epoch in range(num_epochs):
@@ -218,11 +244,26 @@ def train_gcn(
         loss.backward()
         optimizer.step()
         scheduler.step()
+
+        y_probs = softmax(outputs[train_mask]).detach().cpu().numpy()[:, 1]
+        y_true = labels[train_mask]
+
+
+
+        train_auc = roc_auc_score(y_true=y_true, y_score=y_probs)
+        train_ap = average_precision_score(y_true=y_true, y_score=y_probs)
   
     
         # train_loss, train_auc, train_ap = evaluate_rnt(model, criterian, data_train, labels_train, data_image_filename_train)
-        val_loss, val_auc, val_ap, _, _ = evaluate_gcn(model, criterian, nodes_data, edges_data, labels, train_mask, val_mask, test_mask, val_mask)
-        test_loss, test_auc, test_ap, _, _ = evaluate_gcn(model, criterian, nodes_data, edges_data, labels, train_mask, val_mask, test_mask, test_mask, test=True)
+        val_loss, val_auc, val_ap, _, _ = evaluate_gnn(model, criterian, nodes_data, edges_data, labels, train_mask, val_mask, test_mask, val_mask)
+        test_loss, test_auc, test_ap, _, _ = evaluate_gnn(model, criterian, nodes_data, edges_data, labels, train_mask, val_mask, test_mask, test_mask, test=True)
+        
+        # if write_log:
+        #     writer.add_scalars('Loss/fold'+str(fold), {'train':total_loss, 'val': val_loss, 'test':test_loss}, epoch)
+        #     writer.add_scalars('AUC/fold'+str(fold), {'train':train_auc, 'val': val_auc, 'test':test_auc}, epoch)
+        #     writer.add_scalars('AP/fold'+str(fold), {'train':train_ap, 'val': val_ap, 'test':test_ap}, epoch)
+
+
         
         print('Current learning rate: {}'.format(optimizer.param_groups[0]['lr']))
         print('-' * 89)
@@ -233,11 +274,11 @@ def train_gcn(
         total_loss = 0
 
 
-        if val_auc > best_val_auc:
+        if epoch > 10 and val_auc > best_val_auc:
             best_val_auc = val_auc
             best_model_wts = copy.deepcopy(model.state_dict())
 
-            path = best_model_dir + 'best_val_model_' + str(fold) + '.pt'
+            path = best_model_dir + 'best_val_model_' + str(fold) + '.' + str(cv_idx) + '.pt'
             if not os.path.exists(best_model_dir):
                 os.makedirs(best_model_dir)
             
@@ -247,12 +288,12 @@ def train_gcn(
 
 
 
-
+    # writer.close()
     return val_auc, val_ap, best_model_wts
 
 
 
-def evaluate_gcn(
+def evaluate_gnn(
     eval_model,
     criterian,
     nodes_data,
@@ -308,3 +349,204 @@ def evaluate_gcn(
 
 
     return total_loss, auc, ap, y_probs, y_true
+
+
+
+
+def train_PosNeg_ps_graph(
+    hyper_params,
+    model,  
+    data,
+    labels,
+    train_mask,
+    val_mask,
+    train_val_mask,
+    test_mask,
+    best_model_dir,
+    fold,
+    cv_idx,
+    write_log=False
+):
+    device = torch.device(config.gpu_id if torch.cuda.is_available() else "cpu")
+    # device = torch.device("cpu")
+
+    model.to(device)
+
+    train_val_data = data[:, train_val_mask]
+    train_val_labels = labels[train_val_mask]
+    edges_train_val = construct_PosNeg_graphs(train_val_data, train_val_labels, train_mask, val_mask)
+
+
+    graph = GraphDataset(data, data, labels, train_mask, val_mask, test_mask)[0].to(device)
+    # graph = dgl.add_self_loop(graph)
+
+    features = graph.ndata['feat']
+    
+
+
+    best_model_wts = copy.deepcopy(model.state_dict())
+    lr = hyper_params['learning_rate']
+    batch_size = hyper_params['batch_size']
+    num_epochs = hyper_params['num_epochs']
+    
+    criterian = nn.CrossEntropyLoss()
+    softmax = nn.Softmax(dim=1)
+    # optimizer = torch.optim.SGD(ddp_model.parameters(), lr=lr, momentum=0.9)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, betas=[0.9, 0.999],weight_decay=0.01)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer=optimizer, step_size=100, gamma=1)
+    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer=optimizer, T_max=10, eta_min=1e-6)
+    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer=optimizer, mode='min', factor=0.1, patience=5)
+
+    model.train()
+    total_loss = 0
+    best_val_loss = float("inf")
+    best_val_auc = float("-inf")
+    best_val_ap = float("-inf")
+    
+    # writer = SummaryWriter(log_dir='./runs/')
+    
+
+    for epoch in range(num_epochs):
+        # print('Epoch [{}/{}]'.format(epoch + 1, num_epochs))
+        # train_sampler.set_epoch(epoch)
+        
+        epoch_start_time = time.time()
+
+        optimizer.zero_grad()
+
+        outputs = model(graph, features)
+
+        loss = criterian(outputs[graph.ndata['train_mask']], graph.ndata['label'][graph.ndata['train_mask']])
+
+
+        probas = softmax(outputs)
+        total_loss += loss.item()
+        
+        
+
+        
+
+        # print('Epoch {} rank {} total loss {}'.format(epoch, rank, total_loss))
+
+        
+        loss.backward()
+        optimizer.step()
+        scheduler.step()
+
+        y_probs = softmax(outputs[train_mask]).detach().cpu().numpy()[:, 1]
+        y_true = labels[train_mask]
+
+
+
+        train_auc = roc_auc_score(y_true=y_true, y_score=y_probs)
+        train_ap = average_precision_score(y_true=y_true, y_score=y_probs)
+  
+    
+        # train_loss, train_auc, train_ap = evaluate_rnt(model, criterian, data_train, labels_train, data_image_filename_train)
+        val_loss, val_auc, val_ap, _, _ = evaluate_gnn(model, criterian, data, edges_data, labels, train_mask, val_mask, test_mask, val_mask)
+        test_loss, test_auc, test_ap, _, _ = evaluate_gnn(model, criterian, data, edges_data, labels, train_mask, val_mask, test_mask, test_mask, test=True)
+        
+        # if write_log:
+        #     writer.add_scalars('Loss/fold'+str(fold), {'train':total_loss, 'val': val_loss, 'test':test_loss}, epoch)
+        #     writer.add_scalars('AUC/fold'+str(fold), {'train':train_auc, 'val': val_auc, 'test':test_auc}, epoch)
+        #     writer.add_scalars('AP/fold'+str(fold), {'train':train_ap, 'val': val_ap, 'test':test_ap}, epoch)
+
+
+        
+        print('Current learning rate: {}'.format(optimizer.param_groups[0]['lr']))
+        print('-' * 89)
+        print('| end of epoch {:3d} | time: {:5.2f}s | train loss {:5.2f} | valid loss {:5.2f} |'
+                'valid AUC {:.3f}  | valid AP {:.3f} | test loss {:5.2f} | test AUC {:.3f}  | test AP {:.3f}'.format(epoch, (time.time() - epoch_start_time), total_loss, val_loss, val_auc, val_ap, test_loss, test_auc, test_ap))
+        print('-' * 89)
+
+        total_loss = 0
+
+
+        if epoch > 10 and val_auc > best_val_auc:
+            best_val_auc = val_auc
+            best_model_wts = copy.deepcopy(model.state_dict())
+
+            path = best_model_dir + 'best_val_model_' + str(fold) + '.' + str(cv_idx) + '.pt'
+            if not os.path.exists(best_model_dir):
+                os.makedirs(best_model_dir)
+            
+            torch.save({
+                'model_state_dict': best_model_wts,
+            }, path)
+
+
+
+    # writer.close()
+    return val_auc, val_ap, best_model_wts
+
+
+
+def evaluate_PosNeg_ps_graph(
+    eval_model,
+    criterian,
+    nodes_data,
+    edges_data,
+    labels,
+    train_mask,
+    val_mask,
+    test_mask,
+    mask,
+    test=False 
+):
+    device = torch.device(config.gpu_id if torch.cuda.is_available() else "cpu")
+    # device = torch.device("cpu")
+    graph = GraphDataset(nodes_data, edges_data, labels, train_mask, val_mask, test_mask)[0].to(device)
+    # graph = dgl.add_self_loop(graph)
+    
+    features = graph.ndata['feat']
+
+    labels = torch.tensor(labels, dtype=torch.long).to(device)
+
+    mask_bool = graph.ndata['test_mask'] if test else graph.ndata['val_mask']
+
+    # graph = GraphDataset(nodes_data, edges_data, labels)[0].to(device)
+    # mask_bool = torch.zeros(nodes_data.shape[0], dtype=torch.bool)
+    # mask_bool[mask] = True
+
+    
+    
+    eval_model.to(device)
+
+    softmax = nn.Softmax(dim=1)
+
+    eval_model.eval()
+
+    outputs = eval_model(graph, features)
+    # outputs= outputs.view(-1)
+    loss = criterian(outputs[mask_bool], labels[mask_bool])
+    # probas = sigmoid(outputs)
+    probas = softmax(outputs[mask_bool])
+
+
+    y_probs = probas.detach().cpu().numpy()[:, 1]
+    y_true = labels[mask].detach().cpu().numpy()
+    total_loss = loss.item()
+
+
+    auc = roc_auc_score(y_true=y_true, y_score=y_probs)
+    ap = average_precision_score(y_true=y_true, y_score=y_probs)
+
+
+
+    
+
+
+    return total_loss, auc, ap, y_probs, y_true
+
+
+
+
+
+
+
+
+
+
+
+
+
