@@ -1,4 +1,5 @@
 import math
+import numpy as np
 from turtle import forward
 import torch
 import torch.nn.functional as F
@@ -374,7 +375,7 @@ def train_PosNeg_ps_graph(
 
     train_val_data = data.loc[train_val_index, :].reset_index(inplace=False, drop=True)
     train_val_labels = labels[train_val_index]
-    train_val_edges = construct_PosNeg_graphs(train_val_data, train_val_labels, train_index, val_index, topk=3)
+    train_val_edges, _ = construct_PosNeg_graphs(data, labels, train_val_index, train_index, val_index, topk=3)
 
 
     train_val_graph = GraphDataset(train_val_data.values, train_val_edges, train_val_labels, train_index, val_index)[0].to(device)
@@ -441,19 +442,30 @@ def train_PosNeg_ps_graph(
         train_auc = roc_auc_score(y_true=y_true, y_score=y_probs)
         train_ap = average_precision_score(y_true=y_true, y_score=y_probs)
   
-    
-        # train_loss, train_auc, train_ap = evaluate_rnt(model, criterian, data_train, labels_train, data_image_filename_train)
-        val_loss, val_auc, val_ap, _, _ = evaluate_PosNeg_ps_graph(
-            model, 
-            criterian, 
-            data, 
-            labels, 
-            train_index, 
-            val_index,
-            train_val_index,
-            test_index)
-                
-        # test_loss, test_auc, test_ap, _, _ = evaluate_gnn(model, criterian, data, edges_data, labels, train_mask, val_mask, test_mask, test_mask, test=True)
+        if epoch % 20 == 0:
+            # train_loss, train_auc, train_ap = evaluate_rnt(model, criterian, data_train, labels_train, data_image_filename_train)
+            val_loss, val_auc, val_ap, _, _ = evaluate_PosNeg_ps_graph(
+                model, 
+                criterian, 
+                data, 
+                labels, 
+                train_index, 
+                val_index,
+                train_val_index,
+                test_index)
+                    
+        
+            test_loss, test_auc, test_ap, _, _ = evaluate_PosNeg_ps_graph(
+                model, 
+                criterian, 
+                data, 
+                labels, 
+                train_index, 
+                val_index,
+                train_val_index,
+                test_index,
+                test=True)
+        
         
         # if write_log:
         #     writer.add_scalars('Loss/fold'+str(fold), {'train':total_loss, 'val': val_loss, 'test':test_loss}, epoch)
@@ -462,26 +474,26 @@ def train_PosNeg_ps_graph(
 
 
         
-        print('Current learning rate: {}'.format(optimizer.param_groups[0]['lr']))
-        print('-' * 89)
-        print('| end of epoch {:3d} | time: {:5.2f}s | train loss {:5.2f} | valid loss {:5.2f} |'
-                'valid AUC {:.3f}  | valid AP {:.3f} | test loss {:5.2f} | test AUC {:.3f}  | test AP {:.3f}'.format(epoch, (time.time() - epoch_start_time), total_loss, val_loss, val_auc, val_ap, 0, 0, 0))
-        print('-' * 89)
+            print('Current learning rate: {}'.format(optimizer.param_groups[0]['lr']))
+            print('-' * 89)
+            print('| end of epoch {:3d} | time: {:5.2f}s | train loss {:5.2f} | valid loss {:5.2f} |'
+                    'valid AUC {:.3f}  | valid AP {:.3f} | test loss {:5.2f} | test AUC {:.3f}  | test AP {:.3f}'.format(epoch, (time.time() - epoch_start_time), total_loss, val_loss, val_auc, val_ap, test_loss, test_auc, test_ap))
+            print('-' * 89)
 
-        total_loss = 0
+            total_loss = 0
 
 
-        if epoch > 10 and val_auc > best_val_auc:
-            best_val_auc = val_auc
-            best_model_wts = copy.deepcopy(model.state_dict())
+            if epoch > 10 and val_auc > best_val_auc:
+                best_val_auc = val_auc
+                best_model_wts = copy.deepcopy(model.state_dict())
 
-            path = best_model_dir + 'best_val_model_' + str(fold) + '.' + str(cv_idx) + '.pt'
-            if not os.path.exists(best_model_dir):
-                os.makedirs(best_model_dir)
-            
-            torch.save({
-                'model_state_dict': best_model_wts,
-            }, path)
+                path = best_model_dir + 'best_val_model_' + str(fold) + '.' + str(cv_idx) + '.pt'
+                if not os.path.exists(best_model_dir):
+                    os.makedirs(best_model_dir)
+                
+                torch.save({
+                    'model_state_dict': best_model_wts,
+                }, path)
 
 
 
@@ -507,7 +519,7 @@ def evaluate_PosNeg_ps_graph(
 
         train_val_data = data.loc[train_val_index, :].reset_index(inplace=False, drop=True)
         train_val_labels = labels[train_val_index]
-        train_val_edges = construct_PosNeg_graphs(train_val_data, train_val_labels, train_index, val_index, topk=3)
+        train_val_edges, _  = construct_PosNeg_graphs(data, labels, train_val_index, train_index, val_index, topk=3)
 
 
         train_val_graph = GraphDataset(train_val_data.values, train_val_edges, train_val_labels, train_index, val_index)[0].to(device)
@@ -556,27 +568,40 @@ def evaluate_PosNeg_ps_graph(
 
         train_val_data = data.loc[train_val_index, :].reset_index(inplace=False, drop=True)
         train_val_labels = labels[train_val_index]
-        train_val_edges = construct_PosNeg_graphs(train_val_data, train_val_labels, train_index, val_index, topk=3)
+        test_data = data.loc[test_index, :].reset_index(inplace=False, drop=True)
+        test_labels = labels[test_index]
+
+        train_val_edges, test_graph_pair = construct_PosNeg_graphs(data, labels, train_val_index, train_index, val_index, test_index, topk=3, test=True)
 
 
         train_val_graph = GraphDataset(train_val_data.values, train_val_edges, train_val_labels, train_index, val_index)[0].to(device)
         # graph = dgl.add_self_loop(graph)
+        
+        
+        
         test_graphs = []
          
         ''''''
         # 遍历每一个test sample
         # 将其与train_val samples 构建两个图，一个是与pos相连，一个是与neg相连
         # 将构建的图经过网络，预测test sample的属于哪一类，对两个图的结果进行softmax作为其预测结果
+        for idx in range(test_data.shape[0]):
+            edges_pos_graph, edges_neg_graph, test_index_graph = test_graph_pair[idx]
+            train_val_test_data = np.concatenate((train_val_data.values, test_data.loc[idx,:].values[np.newaxis,:]), axis=0) 
+            train_val_test_labesl = np.append(train_val_labels,test_labels[idx])
+            test_graph_pos = GraphDataset(train_val_test_data, edges_pos_graph, train_val_test_labesl, train_index, val_index, test_index_graph)[0].to(device)
+            test_graph_neg = GraphDataset(train_val_test_data, edges_neg_graph, train_val_test_labesl, train_index, val_index, test_index_graph)[0].to(device)
+            test_graphs.append([test_graph_pos, test_graph_neg])
 
 
 
         
         
-        features = train_val_graph.ndata['feat']
+        # features = train_val_graph.ndata['feat']
 
-        train_val_labels = torch.tensor(train_val_labels, dtype=torch.long).to(device)
+        # train_val_labels = torch.tensor(train_val_labels, dtype=torch.long).to(device)
 
-        mask_bool = train_val_graph.ndata['val_mask']
+        # mask_bool = train_val_graph.ndata['val_mask']
 
         # graph = GraphDataset(nodes_data, edges_data, labels)[0].to(device)
         # mask_bool = torch.zeros(nodes_data.shape[0], dtype=torch.bool)
@@ -590,20 +615,33 @@ def evaluate_PosNeg_ps_graph(
 
         eval_model.eval()
 
-        outputs = eval_model(train_val_graph, features)
-        # outputs= outputs.view(-1)
-        loss = criterian(outputs[mask_bool], train_val_labels[mask_bool])
-        # probas = sigmoid(outputs)
-        probas = softmax(outputs[mask_bool])
+        y_probs = np.zeros((test_data.shape[0],2))
+        y_true = np.zeros((test_data.shape[0]))
+        total_loss = 0
+
+        for i, (pos_graph, neg_graph) in enumerate(test_graphs):
+
+            pos_outputs = eval_model(pos_graph, pos_graph.ndata['feat'])
+            # outputs= outputs.view(-1)
+            pos_loss = criterian(pos_outputs[pos_graph.ndata['test_mask']], pos_graph.ndata['label'][pos_graph.ndata['test_mask']])
+            # probas = sigmoid(outputs)
+            pos_probas = softmax(pos_outputs[pos_graph.ndata['test_mask']])
+
+            neg_outputs = eval_model(neg_graph, neg_graph.ndata['feat'])
+            # outputs= outputs.view(-1)
+            neg_loss = criterian(neg_outputs[neg_graph.ndata['test_mask']], neg_graph.ndata['label'][neg_graph.ndata['test_mask']])
+            # probas = sigmoid(outputs)
+            neg_probas = softmax(neg_outputs[neg_graph.ndata['test_mask']])
 
 
-        y_probs = probas.detach().cpu().numpy()[:, 1]
-        y_true = train_val_labels[mask_bool].detach().cpu().numpy()
-        total_loss = loss.item()
+            
+            y_probs[i,:] = (pos_probas.detach().cpu().numpy()+ neg_probas.detach().cpu().numpy())/2
+            y_true[i] = pos_graph.ndata['label'][pos_graph.ndata['test_mask']].detach().cpu().numpy()
+            # total_loss = loss.item()
 
-
-        auc = roc_auc_score(y_true=y_true, y_score=y_probs)
-        ap = average_precision_score(y_true=y_true, y_score=y_probs)
+        test = 1
+        auc = roc_auc_score(y_true=y_true, y_score=y_probs[:,1])
+        ap = average_precision_score(y_true=y_true, y_score=y_probs[:,1])
 
 
 

@@ -323,6 +323,7 @@ def construct_graph_seperated(features, label,
 def construct_PosNeg_graphs(    
     data, 
     labels,
+    train_val_index=None,
     train_index=None,
     val_index=None,
     test_index=None, 
@@ -331,24 +332,26 @@ def construct_PosNeg_graphs(
     sigma=0.01,
     output_dir=None,
     deepfeature=False,
-    save_results=False):
+    save_results=False,
+    test=False):
 
+    train_val_data = data.loc[train_val_index, :].reset_index(inplace=False, drop=True)
+    train_val_labels = labels[train_val_index]
 
-  
-    tumor_data = data[tumor_col].values
-    lymph_node_data = data[lymph_node_col].values
-    demographic_data = data[demographic_col].values
-    biomarker_data = data[biomarker_col].values
-    comorbidity_data = data[comorbidity_col].values
+    tumor_data = train_val_data[tumor_col].values
+    lymph_node_data = train_val_data[lymph_node_col].values
+    demographic_data = train_val_data[demographic_col].values
+    biomarker_data = train_val_data[biomarker_col].values
+    comorbidity_data = train_val_data[comorbidity_col].values
     if deepfeature:
-        deepfeature_data = data[deepfeature_col].values
+        deepfeature_data = train_val_data[deepfeature_col].values
     
-    pos_data = data.loc[labels==1, :]
-    neg_data = data.loc[labels==0, :]
+    pos_data = train_val_data.loc[train_val_labels==1, :]
+    neg_data = train_val_data.loc[train_val_labels==0, :]
     pos_data_index = pos_data.index
     neg_data_index = neg_data.index
 
-   
+
 
     n_pos = pos_data.shape[0]
     n_neg = neg_data.shape[0]
@@ -356,7 +359,10 @@ def construct_PosNeg_graphs(
 
     pos_dist = np.zeros((n_pos,n_pos))
     neg_dist = np.zeros((n_neg,n_neg))
-    inds = np.zeros((data.shape[0], topk+1))
+    inds = np.zeros((train_val_data.shape[0], topk+1))
+
+    edges_train_val = []
+    edges_train_val_test_pair = []
 
     if method!='random':
         if method == 'heat':
@@ -386,14 +392,66 @@ def construct_PosNeg_graphs(
             inds[neg_data_index[i],:] = neg_data_index[ind]
 
         
-        edges = []
+        
         for row in range(inds.shape[0]):
             for col in range(inds.shape[1]):
-                edges.append([row, int(inds[row,col])])
-                if labels[row] != labels[int(inds[row,col])]:
+                edges_train_val.append([row, int(inds[row,col])])
+                if train_val_labels[row] != train_val_labels[int(inds[row,col])]:
                     print('counter node link')
-        edges = np.array(edges, dtype=np.int32)
+        edges_train_val = np.array(edges_train_val, dtype=np.int32)
+    
+    
+    
+    
+    
+    if test:
+        topk = 10
+        test_data = data.loc[test_index, :].values
+        inds_pos = np.zeros((test_data.shape[0], topk+1))
+        inds_neg = np.zeros((test_data.shape[0], topk+1))
+        test_pos_dist = np.zeros((test_data.shape[0], n_pos))
+        test_neg_dist = np.zeros((test_data.shape[0], n_neg))
 
+        if method!='random':
+            if method == 'heat':
+                test_pos_dist = pairwise_distances(test_data,pos_data) **2
+                test_pos_sigma = np.mean(test_pos_dist)
+                test_pos_dist = np.exp(-test_pos_dist/test_pos_sigma)
+
+                test_neg_dist = pairwise_distances(test_data,neg_data) **2
+                test_neg_sigma = np.mean(test_neg_dist)
+                test_neg_dist = np.exp(-test_neg_dist/test_neg_sigma)
+
+            
+            for i in range(test_pos_dist.shape[0]):
+                ind = np.argpartition(test_pos_dist[i, :], -(topk+1))[-(topk+1):]
+                inds_pos[i,:] = pos_data_index[ind]
+            
+            for i in range(test_neg_dist.shape[0]):
+                ind = np.argpartition(neg_dist[i, :], -(topk+1))[-(topk+1):]
+                inds_neg[i,:] = neg_data_index[ind]
+
+            edges_train_val_test_pair = []
+            node_index = train_val_data.shape[0]
+            inds_pos[:,-1] = node_index
+            inds_neg[:,-1] = node_index
+            for i in range(test_data.shape[0]):
+                edges_train_val_test_pos = copy.deepcopy(edges_train_val.tolist())
+                edges_train_val_test_neg = copy.deepcopy(edges_train_val.tolist())
+                
+
+                for col in range(inds_pos.shape[1]):
+                    edges_train_val_test_pos.append([node_index, int(inds_pos[i,col])])
+                    # if train_val_labels[int(inds_pos[i,col])] != 1:
+                    #     print('counter node link')
+
+                for col in range(inds_neg.shape[1]):
+                    edges_train_val_test_neg.append([node_index, int(inds_neg[i,col])])
+                    # if train_val_labels[int(inds_neg[i,col])] != 0:
+                    #     print('counter node link')
+                edges_train_val_test_pos = np.array(edges_train_val_test_pos, dtype=np.int32)
+                edges_train_val_test_neg = np.array(edges_train_val_test_neg, dtype=np.int32)
+                edges_train_val_test_pair.append([edges_train_val_test_pos, edges_train_val_test_neg, node_index])
 
         # if save_results:
         #     file_path=output_dir+ 'graph_{}_{}.csv'.format(method,topk)
@@ -410,7 +468,7 @@ def construct_PosNeg_graphs(
         #                         # pass
         #                     else:
         #                         f.write('{},{}\n'.format(index,neigh ))
-    return edges
+    return edges_train_val, edges_train_val_test_pair
 
 
 
